@@ -1,82 +1,22 @@
-from fetch_data import fetch_events_for_day, fetch_user_contact_info_from_event_user
+from datetime import date
+from fetch_data import fetch_events_for_day, fetch_events_for_week, fetch_user_contact_info_from_event_user
+
 from event_utils import normalize_event
 from metrics import compute_daily_metrics
-from rules import pomodoro_rule, focus_blocks_rule
-from prompt import build_prompt
-from datetime import date
-from llm import generate_email
-from fetch_data import fetch_events_for_week
 from weekly_metrics import compute_weekly_hourly_productivity
-from rules import weekly_focus_blocks_rule
-
+from rules import pomodoro_rule, weekly_focus_blocks_rule
+from prompt import build_pomodoro_prompt, build_weekly_focus_prompt
+from llm import generate_email
 
 
 TEST_USER_ID = 38167
 
 
-def main():
-    email, error = run_once()
-
-    if error:
-        print("Error: ", error)
-        return
-
-    print("\nGENERATED EMAIL:\n")
-    print(email)
-
-"""
-def main():
-    rows = fetch_events_for_day(TEST_USER_ID,day=date(2025, 3, 6))
-    print(f"\n\nEvents fetched: {len(rows)}")
+def run_daily():
+    rows = fetch_events_for_day(TEST_USER_ID, day=date(2025, 3, 13))
 
     if not rows:
-        print("No events found")
-        return
-
-    events = [normalize_event(r) for r in rows]
-    metrics = compute_daily_metrics(events)
-
-    print("Metrics computed:")
-    print(f"  Total work minutes      : {metrics['total_work_min']}")
-    print(f"  Longest focus (minutes) : {metrics['longest_focus_min']}")
-
-    user = fetch_user_contact_info_from_event_user(TEST_USER_ID)
-
-    if not user:
-        print("Could not find user info")
-        return
-
-    print("\nUser:")
-    print(f"  Name  : {user['firstname']} {user['lastname']}")
-    print(f"  Email : {user['email']}")
-
-    insights = []
-    insights.extend(pomodoro_rule(metrics))
-    insights.extend(focus_blocks_rule(metrics))
-
-    prompt = build_prompt(
-        user_name=user["firstname"],
-        date=date.today(),
-        metrics=metrics,
-        insights=insights
-    )
-
-    print("\n\n\nPROMPT:\n")
-    print(prompt)
-
-    
-    email_text = generate_email(prompt)
-
-    print("\n\nGENERATED EMAIL:\n")
-    print(email_text)
-
-"""
-
-def run_once():
-    rows = fetch_events_for_day(TEST_USER_ID, day=date(2025, 3, 5))
-
-    if not rows:
-        return None, "No events found"
+        return None, "No daily events found"
 
     events = [normalize_event(r) for r in rows]
     metrics = compute_daily_metrics(events)
@@ -85,52 +25,80 @@ def run_once():
     if not user:
         return None, "User info not found"
 
-    insights = []
-    insights.extend(pomodoro_rule(metrics))
-    insights.extend(focus_blocks_rule(metrics))
+    insights = pomodoro_rule(metrics)
 
-    # Weekly focus analysis
-    week_events_raw = fetch_events_for_week(
-        TEST_USER_ID,
-        week_start_date=date(2025, 3, 5)
-    )
+    if not insights:
+        return None, None
 
-    week_events = [normalize_event(r) for r in week_events_raw]
-
-    weekly_productive_minutes = sum(
-        e["duration"] / 60
-        for e in week_events
-        if e["productive"]
-    )
-    weekly_productive_minutes = round(weekly_productive_minutes)
-
-
-    weekly_hourly, weekly_apps = compute_weekly_hourly_productivity(week_events)
-
-    insights.extend(
-        weekly_focus_blocks_rule(weekly_hourly, weekly_apps)
-    )
-
-    weekly_focus_text = None
-
-    for i in insights:
-        if i["type"] == "weekly_focus_blocks":
-            weekly_focus_text = i["text"]
-            break
-
-
-    prompt = build_prompt(
+    prompt = build_pomodoro_prompt(
         user_name=user["firstname"],
         date=date.today(),
-        metrics=metrics,
-        insights=insights,
-        weekly_focus_text=weekly_focus_text,
-        weekly_productive_minutes=weekly_productive_minutes,
+        metrics=metrics
     )
 
     email_text = generate_email(prompt)
 
     return email_text, None
+
+
+def run_weekly():
+    rows = fetch_events_for_week(
+        TEST_USER_ID,
+        week_start_date=date(2025, 3, 13)
+    )
+
+    if not rows:
+        return None, "No weekly events found"
+
+    events = [normalize_event(r) for r in rows]
+
+    weekly_hourly, weekly_apps = compute_weekly_hourly_productivity(events)
+
+    insights = weekly_focus_blocks_rule(weekly_hourly, weekly_apps)
+
+    if not insights:
+        return None, None
+
+    user = fetch_user_contact_info_from_event_user(TEST_USER_ID)
+    if not user:
+        return None, "User info not found"
+
+    insight = insights[0]
+
+    prompt = build_weekly_focus_prompt(
+        user_name=user["firstname"],
+        week_range="Past Week",
+        start_hour=insight["start_hour"],
+        end_hour=insight["end_hour"],
+        top_app=insight["top_app"],
+        window_minutes=insight["window_minutes"]
+    )
+
+    email_text = generate_email(prompt)
+
+    return email_text, None
+
+
+def main():
+    daily_email, daily_error = run_daily()
+
+    if daily_error:
+        print("Daily error:", daily_error)
+    elif daily_email:
+        print("\n\n\n------> DAILY POMODORO EMAIL:\n")
+        print(daily_email)
+    else:
+        print("\nNo daily Pomodoro email triggered.\n")
+
+    weekly_email, weekly_error = run_weekly()
+
+    if weekly_error:
+        print("Weekly error:", weekly_error)
+    elif weekly_email:
+        print("\n\n\n-----> WEEKLY FOCUS EMAIL:\n")
+        print(weekly_email)
+    else:
+        print("\nNo weekly focus email triggered.\n")
 
 
 if __name__ == "__main__":
