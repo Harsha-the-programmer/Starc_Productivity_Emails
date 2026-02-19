@@ -209,3 +209,27 @@ def fetch_events_for_week(user_id, week_start_date):
         refined_rows.append(row)
 
     return refined_rows
+
+
+def get_active_users_for_day(day):
+    start_dt = datetime.combine(day, datetime.min.time()) - IST_OFFSET
+    end_dt = start_dt + timedelta(days=1)
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    query = """
+        SELECT DISTINCT user_id
+        FROM processed_users_events
+        WHERE process_start_date >= %s
+          AND process_start_date < %s
+    """
+
+    cursor.execute(query, (start_dt, end_dt))
+    rows = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+
+    return [r["user_id"] for r in rows]
+
